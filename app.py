@@ -3,6 +3,53 @@ import streamlit as st
 from datetime import datetime
 import io
 
+# ---------- CONFIGURACIÓN DE PÁGINA ----------
+st.set_page_config(
+    page_title="Dashboard CEO – Proyectos",
+    page_icon="📊",
+    layout="wide",
+)
+
+# ---------- ESTILOS BÁSICOS ----------
+# Un poquito de CSS para que se vea más limpio
+st.markdown(
+    """
+    <style>
+    /* Ocultar menú y footer de Streamlit si quieres más limpio */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+
+    .big-title {
+        font-size: 36px;
+        font-weight: 700;
+        margin-bottom: 0px;
+    }
+    .sub-title {
+        font-size: 16px;
+        color: #6c757d;
+        margin-bottom: 20px;
+    }
+    .kpi-card {
+        padding: 16px;
+        border-radius: 12px;
+        border: 1px solid #e5e5e5;
+        background-color: #ffffff;
+        text-align: center;
+    }
+    .kpi-label {
+        font-size: 14px;
+        color: #6c757d;
+    }
+    .kpi-value {
+        font-size: 24px;
+        font-weight: 700;
+        margin-top: 4px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ---------- CONFIGURACIÓN DE PESOS ----------
 WEIGHTS = {
     "Impacto_ventas": 2.0,
@@ -27,9 +74,14 @@ def to_number(x):
     return x
 
 def limpiar_numericos(df):
-    """Limpia columnas numéricas según la lógica de tu archivo."""
-    numeric_cols = ["Impacto_ventas", "Tiempo_impl", "Facilidad",
-                    "Alineacion_vision", "Diferenciacion", "Riesgo_bajo"]
+    numeric_cols = [
+        "Impacto_ventas",
+        "Tiempo_impl",
+        "Facilidad",
+        "Alineacion_vision",
+        "Diferenciacion",
+        "Riesgo_bajo",
+    ]
 
     for col in numeric_cols:
         if col not in df.columns:
@@ -39,7 +91,6 @@ def limpiar_numericos(df):
             df[col] = df[col].apply(to_number)
 
         elif col == "Riesgo_bajo":
-            # Mapear SI/NO a números
             def map_riesgo(v):
                 if isinstance(v, str):
                     v_clean = v.strip().lower()
@@ -66,11 +117,9 @@ def color_por_proyecto(row, hoy):
     estado = str(row.get("Estado_manual", "")).strip().lower()
     etd = row.get("ETD", None)
 
-    # Si ya está completado
     if estado == "completado":
         return "✅ VERDE – Completado"
 
-    # Parsear ETD
     if isinstance(etd, str):
         etd_parsed = pd.to_datetime(etd, errors="coerce")
         etd = etd_parsed.date() if pd.notna(etd_parsed) else None
@@ -81,7 +130,6 @@ def color_por_proyecto(row, hoy):
 
     score = row["Score"]
 
-    # Sin fecha ETD: solo Score decide
     if etd is None:
         if score >= 30:
             return "🟢 VERDE – Alta prioridad (sin fecha ETD)"
@@ -90,7 +138,6 @@ def color_por_proyecto(row, hoy):
         else:
             return "⚪ Parking – Baja prioridad (sin fecha ETD)"
 
-    # Con fecha ETD
     if etd < hoy:
         return "🔴 ROJO – Atrasado"
 
@@ -107,11 +154,8 @@ def color_por_proyecto(row, hoy):
         return "⚪ Parking – Baja prioridad"
 
 def procesar_excel(uploaded_file):
-    """Lee el Excel, limpia, calcula Score y Semáforo."""
-    # Leer siempre la primera hoja
     raw = pd.read_excel(uploaded_file, sheet_name=0, header=None)
 
-    # Detectar fila de encabezados (buscamos donde esté 'Proyecto')
     header_row = None
     for i in range(len(raw)):
         if str(raw.iloc[i, 0]).strip().lower() == "proyecto":
@@ -119,68 +163,103 @@ def procesar_excel(uploaded_file):
             break
 
     if header_row is None:
-        # Si no encuentra, asumimos que la primera fila ya es encabezado normal
         df = pd.read_excel(uploaded_file, sheet_name=0)
     else:
         header = raw.iloc[header_row]
         df = raw.iloc[header_row + 1 :].copy()
         df.columns = header
 
-    # Limpiar numericos
     df = limpiar_numericos(df)
-
-    # Calcular Score
     df["Score"] = df.apply(calcular_score, axis=1)
-
-    # Calcular Semáforo
     hoy = datetime.today().date()
     df["Semaforo"] = df.apply(lambda r: color_por_proyecto(r, hoy), axis=1)
-
     return df
 
-# ---------- APP STREAMLIT ----------
+# ---------- UI PRINCIPAL ----------
 
-st.set_page_config(page_title="Tablero de Proyectos – Dark Board", layout="wide")
-
-st.title("🎯 Tablero de Proyectos – Dark Board")
-st.write("Sube tu archivo de proyectos en Excel y te calculo **Score** y **Semáforo** para priorizar.")
+st.markdown('<p class="big-title">📊 Dashboard CEO – Tablero de Proyectos</p>', unsafe_allow_html=True)
+st.markdown(
+    '<p class="sub-title">Sube tu archivo de proyectos en Excel y el sistema te calcula <b>Score</b> y <b>Semáforo</b> para priorizar.</p>',
+    unsafe_allow_html=True,
+)
 
 uploaded_file = st.file_uploader("Cargar archivo Excel (.xlsx)", type=["xlsx"])
 
+# Sidebar: filtros
+st.sidebar.header("🔍 Filtros")
+st.sidebar.write("Aplica filtros para enfocarte en lo que importa.")
+
 if uploaded_file is not None:
     df = procesar_excel(uploaded_file)
-
-    # Ordenar por Score
     df_ordenado = df.sort_values(by="Score", ascending=False)
 
-    # Resumen
-    st.subheader("Resumen general")
+    # Filtros en sidebar
+    estados_unicos = df_ordenado["Semaforo"].unique().tolist()
+    filtro_estado = st.sidebar.multiselect(
+        "Filtrar por semáforo",
+        options=estados_unicos,
+        default=estados_unicos,
+    )
+
+    if "Dueño" in df_ordenado.columns:
+        duenos_unicos = sorted(df_ordenado["Dueño"].dropna().unique().tolist())
+        filtro_dueno = st.sidebar.multiselect(
+            "Filtrar por dueño",
+            options=duenos_unicos,
+            default=duenos_unicos,
+        )
+    else:
+        filtro_dueno = []
+
+    df_filtrado = df_ordenado.copy()
+    if filtro_estado:
+        df_filtrado = df_filtrado[df_filtrado["Semaforo"].isin(filtro_estado)]
+    if "Dueño" in df_filtrado.columns and filtro_dueno:
+        df_filtrado = df_filtrado[df_filtrado["Dueño"].isin(filtro_dueno)]
+
+    # ---------- KPIs ----------
     total_proj = len(df_ordenado)
     en_rojo = (df_ordenado["Semaforo"].str.contains("ROJO")).sum()
     en_amarillo = (df_ordenado["Semaforo"].str.contains("AMARILLO")).sum()
     en_verde = (df_ordenado["Semaforo"].str.contains("VERDE")).sum()
     en_parking = (df_ordenado["Semaforo"].str.contains("Parking")).sum()
 
+    st.markdown("### Resumen general")
+
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("Total proyectos", total_proj)
-    col2.metric("🔴 Atrasados", en_rojo)
-    col3.metric("🟠 Urgentes (<30 días)", en_amarillo)
-    col4.metric("🟢 En buena vía", en_verde)
-    col5.metric("⚪ Parking", en_parking)
+    with col1:
+        st.markdown('<div class="kpi-card"><div class="kpi-label">Total proyectos</div><div class="kpi-value">{}</div></div>'.format(total_proj), unsafe_allow_html=True)
+    with col2:
+        st.markdown('<div class="kpi-card"><div class="kpi-label">🔴 Atrasados</div><div class="kpi-value">{}</div></div>'.format(en_rojo), unsafe_allow_html=True)
+    with col3:
+        st.markdown('<div class="kpi-card"><div class="kpi-label">🟠 Urgentes (&lt;30 días)</div><div class="kpi-value">{}</div></div>'.format(en_amarillo), unsafe_allow_html=True)
+    with col4:
+        st.markdown('<div class="kpi-card"><div class="kpi-label">🟢 En buena vía</div><div class="kpi-value">{}</div></div>'.format(en_verde), unsafe_allow_html=True)
+    with col5:
+        st.markdown('<div class="kpi-card"><div class="kpi-label">⚪ Parking</div><div class="kpi-value">{}</div></div>'.format(en_parking), unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # Tabla
-    st.subheader("Lista de proyectos (ordenados por Score)")
-    st.dataframe(df_ordenado, use_container_width=True)
+    # ---------- GRÁFICA TOP PROYECTOS ----------
+    st.subheader("Top proyectos por Score")
 
-    # Top 5
+    top_chart = df_ordenado.copy()
+    if "Proyecto" in top_chart.columns:
+        top_chart = top_chart.head(10)[["Proyecto", "Score"]].set_index("Proyecto")
+        st.bar_chart(top_chart)
+
+    # ---------- TABLA PRINCIPAL ----------
+    st.markdown("### Lista de proyectos (filtrados y ordenados por Score)")
+    st.dataframe(df_filtrado, use_container_width=True)
+
+    # ---------- TOP 5 ----------
     st.markdown("---")
     st.subheader("Top 5 proyectos recomendados para foco")
+
     cols_top = [c for c in ["Proyecto", "Dueño", "Score", "Semaforo", "ETD", "Estado_manual"] if c in df_ordenado.columns]
     st.table(df_ordenado[cols_top].head(5).reset_index(drop=True))
 
-    # Descargar Excel enriquecido
+    # ---------- DESCARGA EXCEL ----------
     st.markdown("---")
     st.subheader("Descargar Excel enriquecido")
 
